@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 
+	"strings"
+
 	"atomicgo.dev/cursor"
 	"atomicgo.dev/keyboard"
 	"atomicgo.dev/keyboard/keys"
@@ -15,34 +17,40 @@ import (
 var (
 	// DefaultInteractiveMultiselect is the default InteractiveMultiselect printer.
 	DefaultInteractiveMultiselect = InteractiveMultiselectPrinter{
-		TextStyle:      &ThemeDefault.PrimaryStyle,
-		DefaultText:    "Please select your options",
-		Options:        []string{},
-		OptionStyle:    &ThemeDefault.DefaultText,
-		DefaultOptions: []string{},
-		MaxHeight:      5,
-		Selector:       ">",
-		SelectorStyle:  &ThemeDefault.SecondaryStyle,
-		Filter:         true,
-		KeySelect:      keys.Enter,
-		KeyConfirm:     keys.Tab,
-		Checkmark:      &ThemeDefault.Checkmark,
+		TextStyle:           &ThemeDefault.PrimaryStyle,
+		DefaultText:         "Please select your options",
+		Options:             []string{},
+		OptionStyle:         &ThemeDefault.DefaultText,
+		DefaultOptions:      []string{},
+		MaxHeight:           5,
+		Selector:            ">",
+		SelectorStyle:       &ThemeDefault.SecondaryStyle,
+		Filter:              true,
+		KeySelect:           keys.Enter,
+		KeyConfirm:          keys.Tab,
+		Checkmark:           &ThemeDefault.Checkmark,
+		ShowSelectedOptions: false,
+		SelectedOptionStyle: &ThemeDefault.SecondaryStyle,
+		EnableSelectAll:     true,
+		EnableClearAll:      true,
 	}
 )
 
 // InteractiveMultiselectPrinter is a printer for interactive multiselect menus.
 type InteractiveMultiselectPrinter struct {
-	DefaultText     string
-	TextStyle       *Style
-	Options         []string
-	OptionStyle     *Style
-	DefaultOptions  []string
-	MaxHeight       int
-	Selector        string
-	SelectorStyle   *Style
-	Filter          bool
-	Checkmark       *Checkmark
-	OnInterruptFunc func()
+	DefaultText         string
+	TextStyle           *Style
+	Options             []string
+	OptionStyle         *Style
+	DefaultOptions      []string
+	MaxHeight           int
+	Selector            string
+	SelectorStyle       *Style
+	Filter              bool
+	Checkmark           *Checkmark
+	OnInterruptFunc     func()
+	ShowSelectedOptions bool
+	SelectedOptionStyle *Style
 
 	selectedOption        int
 	selectedOptions       []int
@@ -54,10 +62,12 @@ type InteractiveMultiselectPrinter struct {
 	displayedOptionsEnd   int
 
 	// KeySelect is the select key. It cannot be keys.Space when Filter is enabled.
-	KeySelect keys.KeyCode
+	KeySelect       keys.KeyCode
+	EnableSelectAll bool
 
 	// KeyConfirm is the confirm key. It cannot be keys.Space when Filter is enabled.
-	KeyConfirm keys.KeyCode
+	KeyConfirm     keys.KeyCode
+	EnableClearAll bool
 }
 
 // WithOptions sets the options.
@@ -113,6 +123,31 @@ func (p InteractiveMultiselectPrinter) WithCheckmark(checkmark *Checkmark) *Inte
 // OnInterrupt sets the function to execute on exit of the input reader
 func (p InteractiveMultiselectPrinter) WithOnInterruptFunc(exitFunc func()) *InteractiveMultiselectPrinter {
 	p.OnInterruptFunc = exitFunc
+	return &p
+}
+
+// WithShowSelectedOption shows the selected options at the bottom if the menu
+func (p InteractiveMultiselectPrinter) WithShowSelectedOptions(b bool) *InteractiveMultiselectPrinter {
+	p.ShowSelectedOptions = b
+	return &p
+}
+
+// WithSelectedOptionStyle sets the style of the selected options shown at the bottom of the menu
+// only used if ShowSelectedOptions is true
+func (p InteractiveMultiselectPrinter) WithSelectedOptionStyle(style *Style) *InteractiveMultiselectPrinter {
+	p.SelectedOptionStyle = style
+	return &p
+}
+
+// WithSelectAllEnabled enables the select all feature
+// i.e. all options can be selected with the right arrow key
+func (p InteractiveMultiselectPrinter) WithSelectAllEnabled(b bool) *InteractiveMultiselectPrinter {
+	p.EnableSelectAll = b
+	return &p
+}
+
+func (p InteractiveMultiselectPrinter) WithClearAllEnabled(b bool) *InteractiveMultiselectPrinter {
+	p.EnableClearAll = b
 	return &p
 }
 
@@ -230,16 +265,20 @@ func (p *InteractiveMultiselectPrinter) Show(text ...string) ([]string, error) {
 
 			area.Update(p.renderSelectMenu())
 		case keys.Left:
-			// Unselect all options
-			p.selectedOptions = []int{}
-			area.Update(p.renderSelectMenu())
-		case keys.Right:
-			// Select all options
-			p.selectedOptions = []int{}
-			for i := 0; i < len(p.Options); i++ {
-				p.selectedOptions = append(p.selectedOptions, i)
+			if p.EnableClearAll {
+				// Unselect all options
+				p.selectedOptions = []int{}
+				area.Update(p.renderSelectMenu())
 			}
-			area.Update(p.renderSelectMenu())
+		case keys.Right:
+			if p.EnableSelectAll {
+				// Select all options
+				p.selectedOptions = []int{}
+				for i := 0; i < len(p.Options); i++ {
+					p.selectedOptions = append(p.selectedOptions, i)
+				}
+				area.Update(p.renderSelectMenu())
+			}
 		case keys.Up, keys.CtrlP:
 			if len(p.fuzzySearchMatches) == 0 {
 				return false, nil
@@ -295,11 +334,7 @@ func (p *InteractiveMultiselectPrinter) Show(text ...string) ([]string, error) {
 		return nil, fmt.Errorf("failed to start keyboard listener: %w", err)
 	}
 
-	var result []string
-	for _, selectedOption := range p.selectedOptions {
-		result = append(result, p.Options[selectedOption])
-	}
-
+	result := p.getSelectedOptions()
 	return result, nil
 }
 
@@ -377,11 +412,38 @@ func (p *InteractiveMultiselectPrinter) renderSelectMenu() string {
 		}
 	}
 
-	help := fmt.Sprintf("%s: %s | %s: %s | left: %s | right: %s", p.KeySelect, Bold.Sprint("select"), p.KeyConfirm, Bold.Sprint("confirm"), Bold.Sprint("clear selection"), Bold.Sprint("select all"))
+	// TODO? Use a string builder
+	var help string
+	if p.EnableSelectAll {
+		help = fmt.Sprintf("%s: %s | %s: %s | left: %s | right: %s",
+			p.KeySelect, Bold.Sprint("select"),
+			p.KeyConfirm, Bold.Sprint("confirm"),
+			Bold.Sprint("clear selection"),
+			Bold.Sprint("select all"),
+		)
+	} else {
+		help = fmt.Sprintf("%s: %s | %s: %s | left: %s",
+			p.KeySelect, Bold.Sprint("select"),
+			p.KeyConfirm, Bold.Sprint("confirm"),
+			Bold.Sprint("clear selection"),
+		)
+	}
+
 	if p.Filter {
 		help += fmt.Sprintf(" | type to %s", Bold.Sprint("filter"))
 	}
 	content += ThemeDefault.SecondaryStyle.Sprintfln(help)
+
+	if len(p.selectedOptions) > 0 {
+		content += p.SelectedOptionStyle.Sprint("you have selected: ")
+
+		selected := p.getSelectedOptions()
+
+		content += p.SelectedOptionStyle.Add(*Italic.ToStyle()).
+			Sprintln(strings.Join(selected, ", "))
+	}
+	//
+	// style := append(p.SelectedOptionStyle.Add(), Bold)
 
 	return content
 }
@@ -398,4 +460,12 @@ func (p InteractiveMultiselectPrinter) renderFinishedMenu() string {
 
 func (p InteractiveMultiselectPrinter) renderSelector() string {
 	return p.SelectorStyle.Sprint(p.Selector)
+}
+
+func (p InteractiveMultiselectPrinter) getSelectedOptions() []string {
+	selected := make([]string, len(p.selectedOptions))
+	for i, selectedOption := range p.selectedOptions {
+		selected[i] = p.Options[selectedOption]
+	}
+	return selected
 }
