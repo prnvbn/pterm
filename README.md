@@ -1,1 +1,1 @@
-A fork of pterm with additional customisation that I wanted
+A fork of pterm.
