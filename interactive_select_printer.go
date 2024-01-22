@@ -21,24 +21,24 @@ var (
 		OptionStyle:   &ThemeDefault.DefaultText,
 		DefaultOption: "",
 		MaxHeight:     5,
-		Selector:      ">",
-		SelectorStyle: &ThemeDefault.SecondaryStyle,
 		Filter:        true,
+		RenderSelectedOptionFunc: func(s string) string {
+			return Sprintf("  %s %s\n", ">", s)
+		},
 	}
 )
 
 // InteractiveSelectPrinter is a printer for interactive select menus.
 type InteractiveSelectPrinter struct {
-	TextStyle       *Style
-	DefaultText     string
-	Options         []string
-	OptionStyle     *Style
-	DefaultOption   string
-	MaxHeight       int
-	Selector        string
-	SelectorStyle   *Style
-	OnInterruptFunc func()
-	Filter          bool
+	TextStyle                *Style
+	DefaultText              string
+	Options                  []string
+	OptionStyle              *Style
+	DefaultOption            string
+	MaxHeight                int
+	OnInterruptFunc          func()
+	Filter                   bool
+	RenderSelectedOptionFunc func(string) string
 
 	selectedOption        int
 	result                string
@@ -62,6 +62,12 @@ func (p InteractiveSelectPrinter) WithOptions(options []string) *InteractiveSele
 	return &p
 }
 
+// // WithSelectedOptionStyles sets the styles for the selected option based on the provided styles.
+// func (p InteractiveSelectPrinter) WithSelectedOptionStyles(styles []*Style) *InteractiveSelectPrinter {
+// 	p.SelectedOptionStyles = styles
+// 	return &p
+// }
+
 // WithDefaultOption sets the default options.
 func (p InteractiveSelectPrinter) WithDefaultOption(option string) *InteractiveSelectPrinter {
 	p.DefaultOption = option
@@ -83,6 +89,11 @@ func (p InteractiveSelectPrinter) WithOnInterruptFunc(exitFunc func()) *Interact
 // WithFilter sets the Filter option
 func (p InteractiveSelectPrinter) WithFilter(b ...bool) *InteractiveSelectPrinter {
 	p.Filter = internal.WithBoolean(b)
+	return &p
+}
+
+func (p InteractiveSelectPrinter) WithRenderSelectedOptionFunc(f func(string) string) *InteractiveSelectPrinter {
+	p.RenderSelectedOptionFunc = f
 	return &p
 }
 
@@ -263,7 +274,7 @@ func (p *InteractiveSelectPrinter) Show(text ...string) (string, error) {
 func (p *InteractiveSelectPrinter) renderSelectMenu() string {
 	var content string
 	if p.Filter {
-		content += Sprintf("%s %s: %s\n", p.text, p.SelectorStyle.Sprint("[type to search]"), p.fuzzySearchString)
+		content += Sprintf("%s %s: %s\n", p.text, ThemeDefault.SecondaryStyle.Sprint("[type to search]"), p.fuzzySearchString)
 	} else {
 		content += Sprintf("%s:\n", p.text)
 	}
@@ -296,7 +307,8 @@ func (p *InteractiveSelectPrinter) renderSelectMenu() string {
 			continue
 		}
 		if i == p.selectedOption {
-			content += Sprintf("%s %s\n", p.renderSelector(), p.OptionStyle.Sprint(option))
+			content += p.RenderSelectedOptionFunc(option)
+			// content += Sprintf("%s %s\n", p.renderSelector(), p.OptionStyle.Sprint(option))
 		} else {
 			content += Sprintf("  %s\n", p.OptionStyle.Sprint(option))
 		}
@@ -308,11 +320,12 @@ func (p *InteractiveSelectPrinter) renderSelectMenu() string {
 func (p InteractiveSelectPrinter) renderFinishedMenu() string {
 	var content string
 	content += Sprintf("%s: %s\n", p.text, p.fuzzySearchString)
-	content += Sprintf("  %s %s\n", p.renderSelector(), p.result)
+	content += p.RenderSelectedOptionFunc(p.result)
 
 	return content
 }
 
-func (p InteractiveSelectPrinter) renderSelector() string {
-	return p.SelectorStyle.Sprint(p.Selector)
-}
+// func (p InteractiveSelectPrinter) renderSelector() string {
+
+// return p.SelectorStyle.Sprint(p.Selector)
+// }
